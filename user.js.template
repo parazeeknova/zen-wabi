@@ -1,0 +1,14 @@
+// Zen profile prefs - managed by wabi theme switcher
+
+// Enables fx-autoconfig's experimental JSWindowActor support so the
+// matugen-bridge.uc.js @WindowActor directive registers the Matugen
+// child/parent actors. Without this, the bridge has no way to push
+// colors into content processes (Fission safe).
+user_pref("userChromeJS.experimental.enabled", true);
+
+// Enables Browser Toolbox (Ctrl+Shift+Alt+I) for debugging
+user_pref("devtools.chrome.enabled", true);
+user_pref("devtools.debugger.remote-enabled", true);
+
+// Ensures userChrome.css is loaded (Zen 1.14+ defaults this to false)
+user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);

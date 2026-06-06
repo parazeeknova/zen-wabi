@@ -1,0 +1,206 @@
+/* Zen Browser userContent.css - matugen-driven theme
+ * Palette uses CSS custom properties --matugen-* set by matugen-bridge.uc.js
+ * from the Firefox prefs matugen.theme.* (which matugen-bridge writes from
+ * matugen-vars.json on disk). The :root block below holds first-paint
+ * defaults; the bridge overrides them at runtime via inline style.
+ */
+
+:root {
+  --matugen-bg: {{bg}};
+  --matugen-bg-dark: {{bg_dark}};
+  --matugen-bg-light: {{bg_light}};
+  --matugen-fg: {{fg}};
+  --matugen-fg-light: {{fg_light}};
+  --matugen-accent: {{accent}};
+  --matugen-secondary: {{secondary}};
+  --matugen-tertiary: {{tertiary}};
+}
+
+/* Text selection highlight on all web pages. Accent bg with
+ * dark text gives the strongest contrast on both light and
+ * dark page backgrounds. */
+::selection,
+::-moz-selection {
+  background-color: var(--matugen-accent) !important;
+  color: var(--matugen-bg-dark) !important;
+  text-shadow: none !important;
+}
+
+/* Common variables affecting all pages */
+@-moz-document url-prefix("about:") {
+  :root {
+    --in-content-page-color: var(--matugen-fg) !important;
+    --color-accent-primary: var(--matugen-accent) !important;
+    --color-accent-primary-hover: color-mix(in srgb, var(--matugen-accent) 85%, var(--matugen-fg) 15%) !important;
+    --color-accent-primary-active: color-mix(in srgb, var(--matugen-accent) 75%, var(--matugen-fg) 25%) !important;
+    background-color: var(--matugen-bg) !important;
+    --in-content-page-background: var(--matugen-bg) !important;
+  }
+}
+
+/* Variables and styles specific to about:newtab and about:home */
+@-moz-document url("about:newtab"), url("about:home") {
+  :root {
+    --newtab-background-color: var(--matugen-bg) !important;
+    --newtab-background-color-secondary: var(--matugen-bg-light) !important;
+    --newtab-element-hover-color: var(--matugen-bg-light) !important;
+    --newtab-text-primary-color: var(--matugen-fg) !important;
+    --newtab-wordmark-color: var(--matugen-fg) !important;
+    --newtab-primary-action-background: var(--matugen-accent) !important;
+  }
+
+  .icon {
+    color: var(--matugen-accent) !important;
+  }
+
+  .search-wrapper .logo-and-wordmark .logo {
+    background: url("zen-logo-mocha.svg") no-repeat center !important;
+    display: inline-block !important;
+    height: 82px !important;
+    width: 82px !important;
+    background-size: 82px !important;
+  }
+
+  @media (max-width: 609px) {
+    .search-wrapper .logo-and-wordmark .logo {
+      background-size: 64px !important;
+      height: 64px !important;
+      width: 64px !important;
+    }
+  }
+
+  .card-outer:is(:hover, :focus, .active):not(.placeholder) .card-title {
+    color: var(--matugen-accent) !important;
+  }
+
+  .top-site-outer .search-topsite {
+    background-color: var(--matugen-accent) !important;
+  }
+
+  .compact-cards .card-outer .card-context .card-context-icon.icon-download {
+    fill: var(--matugen-accent) !important;
+  }
+}
+
+/* Variables and styles specific to about:preferences */
+@-moz-document url-prefix("about:preferences") {
+  :root {
+    --zen-colors-tertiary: var(--matugen-bg-dark) !important;
+    --in-content-text-color: var(--matugen-fg) !important;
+    --link-color: var(--matugen-accent) !important;
+    --link-color-hover: color-mix(in srgb, var(--matugen-accent) 85%, var(--matugen-fg) 15%) !important;
+    --zen-colors-primary: var(--matugen-bg-light) !important;
+    --in-content-box-background: var(--matugen-bg-light) !important;
+    --zen-primary-color: var(--matugen-accent) !important;
+  }
+
+  groupbox, moz-card {
+    background: var(--matugen-bg) !important;
+  }
+
+  button, groupbox menulist {
+    background: var(--matugen-bg-light) !important;
+    color: var(--matugen-fg) !important;
+  }
+
+  .main-content {
+    background-color: var(--matugen-bg-dark) !important;
+  }
+
+  .identity-color-blue {
+    --identity-tab-color: #8aadf4 !important;
+    --identity-icon-color: #8aadf4 !important;
+  }
+
+  .identity-color-turquoise {
+    --identity-tab-color: #8bd5ca !important;
+    --identity-icon-color: #8bd5ca !important;
+  }
+
+  .identity-color-green {
+    --identity-tab-color: #a6da95 !important;
+    --identity-icon-color: #a6da95 !important;
+  }
+
+  .identity-color-yellow {
+    --identity-tab-color: #eed49f !important;
+    --identity-icon-color: #eed49f !important;
+  }
+
+  .identity-color-orange {
+    --identity-tab-color: #f5a97f !important;
+    --identity-icon-color: #f5a97f !important;
+  }
+
+  .identity-color-red {
+    --identity-tab-color: #ed8796 !important;
+    --identity-icon-color: #ed8796 !important;
+  }
+
+  .identity-color-pink {
+    --identity-tab-color: #f5bde6 !important;
+    --identity-icon-color: #f5bde6 !important;
+  }
+
+  .identity-color-purple {
+    --identity-tab-color: var(--matugen-accent) !important;
+    --identity-icon-color: var(--matugen-accent) !important;
+  }
+}
+
+/* Variables and styles specific to about:addons */
+@-moz-document url-prefix("about:addons") {
+  :root {
+    --zen-dark-color-mix-base: var(--matugen-bg-dark) !important;
+    --background-color-box: var(--matugen-bg) !important;
+  }
+}
+
+/* Variables and styles specific to about:protections */
+@-moz-document url-prefix("about:protections") {
+  :root {
+    --zen-primary-color: var(--matugen-bg) !important;
+    --social-color: var(--matugen-accent) !important;
+    --cookie-color: var(--matugen-accent) !important;
+    --fingerprinter-color: var(--matugen-accent) !important;
+    --cryptominer-color: var(--matugen-accent) !important;
+    --tracker-color: var(--matugen-accent) !important;
+    --in-content-primary-button-background-hover: color-mix(in srgb, var(--matugen-accent) 85%, var(--matugen-fg) 15%) !important;
+    --in-content-primary-button-text-color-hover: var(--matugen-fg) !important;
+    --in-content-primary-button-background: var(--matugen-bg-light) !important;
+    --in-content-primary-button-text-color: var(--matugen-fg) !important;
+  }
+
+  .card {
+    background-color: var(--matugen-bg-light) !important;
+  }
+}
+
+/* Findbar match highlights inside page content. The findbar
+ * wraps every match in a <span class="matched-word">. Accent
+ * bg with dark fg gives consistent visual style with the
+ * ::selection rule above and the findbar's accent border. */
+.matched-word {
+  background-color: color-mix(in srgb, var(--matugen-accent) 60%, transparent) !important;
+  color: var(--matugen-bg-dark) !important;
+  text-decoration: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  outline: none !important;
+}
+
+.matched-word:focus,
+.matched-word.selected {
+  background-color: var(--matugen-accent) !important;
+  color: var(--matugen-bg-dark) !important;
+  outline: 1px solid var(--matugen-accent) !important;
+}
+
+/* ============================================================
+ * GitHub theming has moved to userContent.github.template.
+ * When this CSS is injected via the Matugen JSWindowActor child
+ * as a <style> element, @-moz-document rules are ignored, so
+ * per-site rules live in their own file and the actor child
+ * injects them only when the document hostname matches.
+ * ============================================================ */
