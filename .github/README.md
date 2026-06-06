@@ -1,5 +1,7 @@
 # zen-wabi
 
+![wabi](./assets/wabi.png)
+
 > **Matugen-driven dynamic theme for [Zen Browser](https://zen-browser.app/) — wallpaper-aware, per-site, hot-reloadable.**
 
 `zen-wabi` turns the matugen palette generator into a live theming engine
@@ -21,19 +23,40 @@ fades the entire browser from one look to another.
 
 ## Table of contents
 
-- [How it works](#how-it-works)
-- [Features](#features)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Repository layout](#repository-layout)
-- [Risks & limitations](#risks--limitations)
-- [Roadmap / TODOs](#roadmap--todos)
-- [Contributing](#contributing)
-  - [Adding a new site](#adding-a-new-site)
-  - [Theming rules & conventions](#theming-rules--conventions)
-  - [Debugging tips](#debugging-tips)
-- [License](#license)
+- [zen-wabi](#zen-wabi)
+  - [Table of contents](#table-of-contents)
+  - [How it works](#how-it-works)
+    - [Why a JSWindowActor?](#why-a-jswindowactor)
+  - [Features](#features)
+  - [Requirements](#requirements)
+  - [Installation](#installation)
+    - [1. Clone](#1-clone)
+    - [2. Deploy templates](#2-deploy-templates)
+    - [3. Install fx-autoconfig](#3-install-fx-autoconfig)
+    - [4. Enable the experimental actor runtime](#4-enable-the-experimental-actor-runtime)
+    - [5. Restart Zen](#5-restart-zen)
+    - [6. Trigger a wallpaper change](#6-trigger-a-wallpaper-change)
+  - [Usage](#usage)
+    - [Switching themes](#switching-themes)
+    - [Per-site toggling](#per-site-toggling)
+    - [Per-profile](#per-profile)
+    - [Logs](#logs)
+  - [Repository layout](#repository-layout)
+  - [Risks \& limitations](#risks--limitations)
+    - [Hard risks](#hard-risks)
+    - [Soft limitations](#soft-limitations)
+    - [Known visual nits](#known-visual-nits)
+  - [Roadmap / TODOs](#roadmap--todos)
+    - [Short term](#short-term)
+    - [Medium term](#medium-term)
+    - [Long term](#long-term)
+    - [Done (recent)](#done-recent)
+  - [Contributing](#contributing)
+    - [Quick start](#quick-start)
+    - [Adding a new site](#adding-a-new-site)
+    - [Theming rules \& conventions](#theming-rules--conventions)
+    - [Debugging tips](#debugging-tips)
+  - [License](#license)
 
 ---
 
@@ -79,8 +102,8 @@ The `theme_switcher` binary is the only piece this repo **does not**
 ship — it is built from your wallpaper switcher's source tree and is
 expected to know how to read the palette JSON and call
 `render_template()`. A reference implementation lives in the
-[wabi Quickshell config](https://github.com/) used to develop this
-project; see the [Contributing](#contributing) section for the
+[dotfiles](https://github.com/parazeeknova/doty) used to develop this
+project; see the [Contributing](https://github.com/parazeeknova/zen-wabi/blob/main/docs/ADDING-A-SITE.md) section for the
 template-rendering contract.
 
 ### Why a JSWindowActor?
@@ -153,7 +176,7 @@ adapt any external palette source.
 ### 1. Clone
 
 ```sh
-git clone https://github.com/<you>/zen-wabi.git ~/Repository/zen-wabi
+git clone https://github.com/parazeeknova/zen-wabi.git ~/Repository/zen-wabi
 ```
 
 ### 2. Deploy templates
