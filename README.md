@@ -1,536 +1,541 @@
-# Zen Browser + matugen dynamic theming
+# zen-wabi
 
-A write-up of how I (finally) got my matugen palette to drive my Zen Browser
-theme live, in both chrome (sidebar, tabs, popups) **and** web content
-(`::selection`, etc.). Includes the dead-ends, the stupid bugs, and the
-architecture that actually stuck.
+> **Matugen-driven dynamic theme for [Zen Browser](https://zen-browser.app/) — wallpaper-aware, per-site, hot-reloadable.**
 
-If you're reading this, you're either me in three months, or someone with
-the same problem. Either way: sorry, this took a while.
+`zen-wabi` turns the matugen palette generator into a live theming engine
+for Zen Browser. The same wallpaper-switcher event that re-tints your
+terminal, status bar, and launcher also re-tints every tab you have open —
+including per-site overrides for sites like GitHub that have their own
+design system.
 
----
+The repo ships two layers:
 
-## The goal
+1. **Browser chrome** — Zen's own UI (`userChrome.css` + `userContent.css`).
+2. **Per-site userstyles** — content CSS injected into matching hostnames
+   via a JSWindowActor. Currently: `github.com` and subdomains.
 
-I have a Hyprland setup driven by [wabi](https://github.com/), a Rust
-theme switcher. It already produces a matugen palette and a colors.json
-under `~/.cache/quickshell/`. I wanted that same palette to drive Zen:
-
-- Sidebar text/icons in the accent color.
-- Selected tab uses a subtle `bg-light`, not bright accent.
-- Sharp corners, no panel shadows, subtle accent border on popups.
-- `::selection` on **websites** uses accent (not just chrome).
-- All of it updates **live** when I switch wallpaper — no Zen restart.
-
-Last bullet is the one that killed the obvious approach.
+Both layers read `--matugen-*` CSS variables, so a single palette change
+fades the entire browser from one look to another.
 
 ---
 
-## What I have to work with
+## Table of contents
 
-- Zen Browser installed at `/opt/zen-browser-bin/` (root-owned package build).
-- Two profiles: `v1oocp83.Default (release)` and `oxw0c1nv.Default Profile`.
-- [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) for arbitrary
-  userChrome.js / userChrome.css / userContent.css injection.
-- A Quickshell bar that runs my Rust `theme_switcher` on wallpaper change
-  (`Quickshell.execDetached([homeDir + "/doty/scripts/theme_switcher", "wallpaper", path])`).
-- wabi builds me a matugen palette already — I just need to get it into
-  Firefox.
+- [How it works](#how-it-works)
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Repository layout](#repository-layout)
+- [Risks & limitations](#risks--limitations)
+- [Roadmap / TODOs](#roadmap--todos)
+- [Contributing](#contributing)
+  - [Adding a new site](#adding-a-new-site)
+  - [Theming rules & conventions](#theming-rules--conventions)
+  - [Debugging tips](#debugging-tips)
+- [License](#license)
 
 ---
 
-## The journey (the long part)
+## How it works
 
-### Phase 1: the "obvious" approach — just template-substitute the CSS
+```
+┌──────────────────┐    JSON     ┌──────────────────┐
+│  wallpaper       │────────────▶│  theme_switcher  │
+│  switcher (QML)  │             │  (Rust binary)   │
+└──────────────────┘             └────────┬─────────┘
+                                          │ renders templates
+                                          ▼
+                          ┌──────────────────────────────┐
+                          │  ~/.config/zen/<profile>/    │
+                          │  chrome/                     │
+                          │    matugen-vars.json         │
+                          │    matugen-userstyles.css    │
+                          │    matugen-userstyles-       │
+                          │         github.css           │
+                          └────────┬─────────────────────┘
+                                   │ mtime watcher
+                                   ▼
+                          ┌──────────────────────────────┐
+                          │  matugen-bridge.uc.js        │
+                          │  (fx-autoconfig chrome side) │
+                          │   • sets prefs (8 vars)      │
+                          │   • updates :root in chrome  │
+                          │   • broadcasts to actors     │
+                          └────────┬─────────────────────┘
+                                   │ JSWindowActor messages
+                                   ▼
+                          ┌──────────────────────────────┐
+                          │  MatugenChild.sys.mjs        │
+                          │  (per content process)       │
+                          │   • re-injects userstyles    │
+                          │   • updates :root on doc     │
+                          │   • MutationObserver for     │
+                          │     lazy / SPA-loaded nodes  │
+                          └──────────────────────────────┘
+```
 
-My first move was the boring one. Make `userChrome.css.template` with
-`{{accent}}`, `{{bg}}`, etc. placeholders, have the switcher fill them in
-and write the file to the profile. Done. Restart Zen, get colored sidebar.
+The `theme_switcher` binary is the only piece this repo **does not**
+ship — it is built from your wallpaper switcher's source tree and is
+expected to know how to read the palette JSON and call
+`render_template()`. A reference implementation lives in the
+[wabi Quickshell config](https://github.com/) used to develop this
+project; see the [Contributing](#contributing) section for the
+template-rendering contract.
 
-This worked. It was also completely useless to me, because the whole point
-was *not restarting Zen* on every wallpaper change.
+### Why a JSWindowActor?
 
-So I needed live updates. I knew I could do that with the CSSOM:
+Firefox's `userContent.css` is unreliable in Zen ≥ 1.20 — it is gated
+behind a pref that often resets, and `@-moz-document` rules only work
+inside `userContent.css`, not inside stylesheets dynamically injected
+into the content process. The actor approach:
+
+- injects CSS as a real `<style>` element in the content document,
+- lets us match hostnames from the parent side (no hardcoded URL
+  prefixes in the CSS itself),
+- gets a clean re-injection point on theme change with no page reload,
+- survives Fission (multi-process) — each content process has its own
+  `MatugenChild`.
+
+---
+
+## Features
+
+- **Hot reload, no restart.** Change wallpapers and every open tab
+  fades from the old palette to the new one in 0.35s. No reload, no
+  flicker.
+- **Per-site overrides.** The bridge ships `matugen-userstyles.css`
+  globally and `matugen-userstyles-<site>.css` per supported site.
+  Hostname matching is suffix-based: `gist.github.com` matches the
+  github file.
+- **No hardcoded CSS class names** for Primer/React components. Every
+  `prc-ModuleName-HASH` selector is written as `[class*="prc-ModuleName"]`
+  so GitHub's nightly deploys don't break the theme.
+- **Smooth color transitions.** 0.35s ease on `background-color`,
+  `color`, `border-color`, `fill`, `stroke`, and `box-shadow` for every
+  element. Looks like a real desktop theme, not a flash-cut.
+- **No "card look" leak.** Surfaces blend to the page background
+  (`--matugen-bg`); only true content cards (pinned items, file tree
+  rows, code viewer) get the lighter `--matugen-bg-dark` tint.
+- **Catppuccin-faithful accents.** The 26 Catppuccin colors are mapped
+  to 8 matugen variables; the danger color stays a neutral rose that
+  reads correctly on both warm and cool palettes.
+- **Mature GitHub coverage.** Profile, dashboard, repo page (file
+  tree, header, action buttons, PR/issue lists, filter chips), Copilot
+  chat input, search suggestions, and the user status pill are all
+  themed.
+- **Per-profile isolation.** Each Zen profile under
+  `~/.config/zen/<profile>/chrome/` is independent. You can theme one
+  profile for work and another for personal without cross-talk.
+
+---
+
+## Requirements
+
+| Tool         | Version  | Notes                                    |
+| ------------ | -------- | ---------------------------------------- |
+| Zen Browser  | ≥ 1.20   | Earlier builds lack Fission-safe actors. |
+| matugen      | latest   | Generates the JSON palette.              |
+| A matugen-   | any      | Hyprland, Quickshell, river, sway, etc.  |
+| aware WM     |          |                                          |
+| fx-autoconfig| latest   | Provides the `JSWindowActor` runtime.    |
+| Rust (build) | stable   | Only needed if rebuilding `theme_switcher`. |
+
+You also need a wallpaper that goes through matugen — the color
+extraction is the palette source. If your WM doesn't run matugen yet,
+see [Adding a new site](#adding-a-new-site) for the JSON contract and
+adapt any external palette source.
+
+---
+
+## Installation
+
+### 1. Clone
+
+```sh
+git clone https://github.com/<you>/zen-wabi.git ~/Repository/zen-wabi
+```
+
+### 2. Deploy templates
+
+The repo ships `*.template` files. Either:
+
+- copy them into your existing `~/.config/zen/` and let your
+  `theme_switcher` render them on next wallpaper change, **or**
+- symlink them so template edits are live:
+
+  ```sh
+  ln -sf ~/Repository/zen-wabi/userChrome.css.template \
+         ~/.config/zen/userChrome.css.template
+  ln -sf ~/Repository/zen-wabi/userContent.css.template \
+         ~/.config/zen/userContent.css.template
+  ln -sf ~/Repository/zen-wabi/userContent.github.template \
+         ~/.config/zen/userContent.github.template
+  ln -sf ~/Repository/zen-wabi/user.js.template \
+         ~/.config/zen/user.js.template
+  ```
+
+### 3. Install fx-autoconfig
+
+The `fx-autoconfig/` directory in this repo is a **drop-in** for the
+`fx-autoconfig` Zen distribution layout:
+
+```sh
+# merge with the rest of your fx-autoconfig config
+cp -r fx-autoconfig/* /opt/zen-browser-bin/
+```
+
+If you use a different fx-autoconfig layout, just merge the contents
+of `fx-autoconfig/profile/chrome/JS/Matugen/` and the bridge file into
+your existing `chrome/JS/` directory.
+
+### 4. Enable the experimental actor runtime
+
+Add to `~/.config/zen/<profile>/user.js`:
 
 ```js
-document.documentElement.style.setProperty('--matugen-accent', '#a9b665');
+userChromeJS.experimental.enabled = true;
 ```
 
-The trick is getting the JS to run with the right values. Where does the JS
-live, and where does it learn the colors?
+(The `user.js.template` already does this — merge it into your
+existing `user.js` if you have one.)
 
-### Phase 2: poll from a userChrome.js script
+### 5. Restart Zen
 
-`fx-autoconfig` lets you drop a `*.uc.js` in `chrome/JS/` and it auto-loads
-it. I figured: poll a file, set inline CSS vars on `:root`, done.
-
-I did that. The chrome side updated live. Beautiful. I was patting myself
-on the back.
-
-Then I switched a tab. The new website didn't have my colors. Of course it
-didn't — `:root` lives in the chrome document, web content has its own
-`:root`. CSS custom properties don't cross document boundaries. I knew
-this. I did it anyway.
-
-To push vars into content documents, I need code running *in* the content
-process. In modern Firefox/Zen with **Fission on** (and it is on by
-default), that's a JSWindowActor. No more `loadFrameScript`. No more
-content scripts the easy way.
-
-### Phase 3: the JSWindowActor crash era
-
-OK, JSWindowActor. The actor has a `parent` (chrome process) and `child`
-(content process). When the parent sends a message, the child handles it.
-
-The actor's `esModuleURI` is supposed to be a real `chrome://` URI. But I
-didn't have a chrome package set up; my files were just sitting in
-`JS/`. So I thought: data: URI. Encode the module as base64, set
-`esModuleURI` to `data:application/javascript;base64,...`. Same trick for
-the stylesheet — `data:text/css;base64,...` and feed it to
-`Services.scriptStyleSheetLoader.loadAndRegisterSheet`.
-
-This compiled. The bridge logged that it registered. Then I switched
-themes and Zen hard-crashed. Not "stopped responding" — *crashed*. The
-whole browser window vanished.
-
-I tried several permutations:
-- Inline the child as a string and use a `data:` URI for the actor.
-- Skip the actor entirely and use a polling content script via
-  `loadFrameScript` (rejected — Fission).
-- Set `Services.scriptStyleSheetLoader` sheets via data: URIs from a
-  per-frame message.
-
-Every time, switching themes under load killed the browser. The data: URI
-trick was clearly upsetting something low-level in Firefox. Maybe CSP, maybe
-the sheet loader's caching, maybe something in the actor's module loader.
-
-I threw all of that code out. Time for a different architecture.
-
-### Phase 4: Path B — the right one
-
-The key insight: **Firefox already has a way to ship strings from the
-chrome process to the content process: prefs.** `Services.prefs` is
-visible everywhere, pref changes fire observers in every process, and
-content processes can read pref values directly.
-
-So the new architecture:
-
-1. Switcher (Rust) writes a small JSON file:
-   `matugen-vars.json` with the 8 matugen colors.
-2. A `matugen-bridge.uc.js` in `chrome/JS/` polls the JSON's mtime.
-3. When it changes, the bridge writes 8 `matugen.theme.*` string prefs.
-4. Pref observers in the bridge fire → it sets inline CSS vars on
-   `document.documentElement` (chrome `:root`).
-5. A JSWindowActor's child side listens for either pref changes or a
-   `Matugen:ApplyVars` message, and sets the same vars on each content
-   document's `:root`.
-
-No custom sheet loading. No data: URIs. No `loadAndRegisterSheet`. The
-content process just gets the values and sets CSS variables — exactly
-what the chrome process does. The CSS in `userChrome.css` and
-`userContent.css` uses `var(--matugen-accent)`, etc., so changing the
-inline style on `:root` instantly updates everything.
-
-I liked this. It uses platform mechanisms instead of fighting them.
-
-### Phase 5: the chrome://userscripts discovery
-
-fx-autoconfig's `chrome.manifest` has this line:
-
-```
-content userscripts ../JS/
+```sh
+pkill -9 zen-bin
+/opt/zen-browser-bin/zen-bin &
 ```
 
-That means `chrome://userscripts/content/foo` resolves to `JS/foo` in
-the profile. So I can drop a file at `JS/Matugen/MatugenChild.sys.mjs`
-and reference it from anywhere as
-`chrome://userscripts/content/Matugen/MatugenChild.sys.mjs`. That's a
-real `chrome://` URI, the kind `ChromeUtils.registerWindowActor` is
-happy with.
+Tail the bridge log to confirm boot:
 
-No more data: URIs. No more crashes from that vector.
-
-### Phase 6: the @WindowActor directive (and the JSON.parse gotcha)
-
-fx-autoconfig has experimental support for JSWindowActors. You add a
-header to a `.uc.js` file:
-
-```js
-// ==UserScript==
-// @name matugen-bridge
-// @WindowActor Matugen
-// @WindowActorMatches ["<all>"]
-// ==/UserScript==
+```sh
+tail -f ~/.config/zen/<profile>/chrome/matugen-bridge.log
 ```
 
-fx-autoconfig parses these on load and registers the actor via
-`ActorManagerParent.addJSWindowActors`.
+You should see:
 
-I tried that. The bridge loaded. Then I switched themes. The broadcast
-went to `0/25` tab actors.
-
-Worse: when I had `@WindowActorMatches '["<all>"]'` (with single quotes
-around the array — a habit from Python), fx-autoconfig barfed with
-`SyntaxError: JSON.parse`. The directive value is parsed as JSON.
-`"[\"<all>\"]"` works; `'["<all>"]'` does not. Easy fix, easy to miss.
-
-Removing the quotes gave me a clean log. But the actor was still
-`0/25`. Why?
-
-### Phase 7: why 0/25?
-
-I read `fx-autoconfig`'s `boot.sys.mjs` (specifically the
-`buildScriptActorDefinition` function). The actor definition is
-hardcoded with:
-
-```js
-remoteTypes: ["privilegedabout", null],
+```
+[matugen-bridge] [INFO] SCRIPT TOP  version 1.4
+[matugen-bridge] [INFO] Registered Matugen JSWindowActor
+[matugen-bridge] [INFO] Watching: .../matugen-userstyles*.css
 ```
 
-`null` is the default for `about:blank`. `"privilegedabout"` is for
-privileged about: pages. But regular web content (http/https) has
-`remoteType: "web"`. So the actor was registered, but never *created*
-for any of my 25 web tabs.
+### 6. Trigger a wallpaper change
 
-The fix: don't use fx-autoconfig's `@WindowActor` directive. Register
-the actor manually from inside the bridge, with the right `remoteTypes`:
+Switch your wallpaper through whatever mechanism your WM exposes
+(Hyprland `hyprpaper`, `swaybg`, `wpaperd`, `wallutils`, etc.). The
+switcher should call:
 
-```js
-ChromeUtils.registerWindowActor("Matugen", {
-  parent: { esModuleURI: "chrome://userscripts/content/Matugen/MatugenParent.sys.mjs" },
-  child:  { esModuleURI: "chrome://userscripts/content/Matugen/MatugenChild.sys.mjs",
-            events: { DOMContentLoaded: {} } },
-  matches: ["<all_urls>"],
-  remoteTypes: ["web", "privilegedabout", "moz-extension", null],
-  allFrames: false,
-  includeChrome: true,
-});
+```sh
+theme_switcher wallpaper /path/to/wallpaper.jpg
 ```
 
-Removed the `@WindowActor` / `@WindowActorMatches` headers from the
-bridge. Deployed. Restarted Zen.
-
-`Broadcast to 1/25 tab actors (skipped=24)`.
-
-The 24 skipped aren't broken — they're background/unloaded tabs that
-don't have a `currentWindowGlobal` yet. When you actually switch to
-them, they load, the actor's `handleEvent("DOMContentLoaded")` fires,
-reads the current prefs, and applies the theme. So they pick up the
-current theme lazily. I tested this and it works.
-
-### Phase 8: the stale binary
-
-About 2 hours into Phase 7, I was convinced the actor registration was
-silently failing. I started wondering if my Rust binary at
-`~/doty/scripts/theme_switcher` was even the new one. It was not. It was
-from June 5. The new one (June 6, with the JSON-writing code) had never
-made it into the deployed location.
-
-The Makefile's `sync` target was failing because some other process
-(`wallpaper_thumb_watcher`) was holding the file busy. So `make sync`
-silently skipped the copy. The source `target/release/theme_switcher`
-was correct, the deployed binary was old.
-
-`cp` manually. Checked the size jumped from 1.16 MB to 1.19 MB. Log
-started showing `Wrote 8 prefs from matugen-vars.json`. So the chain
-was working end-to-end, I just couldn't see the new writes because
-the deployed binary wasn't writing them.
-
-Lesson: when nothing changes despite everything looking right, check
-*which* binary is running, not just *that* one is.
-
-### Phase 9: small cleanups
-
-After confirming the live switch works, the log was noisy: 8 broadcasts
-per mtime change. Why? Each `setStringPref` call fires the pref
-observer synchronously, which calls `onPrefChange`, which broadcasts.
-With 8 prefs, that's 8 broadcasts per switch.
-
-Fix: in `applyJson`, suppress the observer while setting the 8 prefs,
-then call `onPrefChange()` once at the end. One broadcast per switch.
-Logs are readable now.
+Every open GitHub tab will fade from the old palette to the new one
+over ~0.35s.
 
 ---
 
-## What worked
+## Usage
 
-- **fx-autoconfig** for injecting `userChrome.css`, `userContent.css`,
-  and `*.uc.js` into Zen.
-- **`chrome://userscripts/content/...` URIs** — fx-autoconfig's
-  `content userscripts ../JS/` mapping. Lets you use real chrome://
-  URIs from anything in `JS/` without packaging.
-- **JSWindowActor with `ChromeUtils.registerWindowActor` called from
-  the bridge** — bypasses fx-autoconfig's hardcoded `remoteTypes` so
-  the actor is created for `web` content, not just `privilegedabout`.
-- **Pref-driven theming** — Firefox's own IPC for shipping values
-  chrome→content. No custom protocols, no data: URIs, no sheet
-  loaders.
-- **Polling JSON mtime** as the switcher→bridge transport. The
-  switcher is a Rust binary, can't call into Firefox; the bridge
-  runs in Firefox, can't reach the switcher. A tiny JSON file at
-  `chrome/matugen-vars.json` is the cleanest contract between them.
-- **Inline `style.setProperty` on `documentElement`** — wins over
-  CSS rules, so the bridge overrides the `:root` defaults in the
-  template at runtime.
-- **Lazy apply via `DOMContentLoaded`** — unloaded background tabs
-  don't need to be touched. When the user switches to them, the
-  actor child reads current prefs and applies the latest theme.
+### Switching themes
 
-## What didn't work
+Theme changes are driven by the wallpaper event — there is no manual
+"rebuild CSS" step. If you want to test a palette without changing
+wallpaper:
 
-- **Data: URIs for actor `esModuleURI` or for sheet registration.**
-  Hard crashes. Don't.
-- **`loadFrameScript` and other pre-Fission tricks.** Fission is on
-  in Zen by default; everything is multi-process now.
-- **fx-autoconfig's `@WindowActor` directive** for actors that need
-  to attach to web content. The `remoteTypes` it picks are wrong for
-  the modern web.
-- **The "obvious" CSS template substitution without live reload.**
-  Works for first paint, requires Zen restart for every change. The
-  whole point of the exercise was *no restart*.
-- **Catching `Services.io.newFileURI(chrome://...)`** to find the
-  chrome dir. That throws for `chrome://` URIs. Use
-  `Services.dirsvc.get("UChrm", Ci.nsIFile)` instead.
-- **Single quotes around the `@WindowActorMatches` JSON value.**
-  Treated as part of the string by `JSON.parse`. Use double quotes
-  or no quotes.
-
----
-
-## Final architecture
-
-```
-┌─────────────────────┐  writes           ┌────────────────────────────┐
-│ wabi theme_switcher │ ────────────────► │ chrome/matugen-vars.json   │
-│ (Rust binary)       │  8-color JSON     │  {bg, bg_dark, bg_light,   │
-└─────────────────────┘                   │   fg, fg_light, accent,    │
-        ▲                                │   secondary, tertiary}     │
-        │                                └─────────────┬──────────────┘
-        │ Quickshell execDetached                      │ polls mtime (1s)
-        │                                              ▼
-┌─────────────────────┐                   ┌────────────────────────────┐
-│ Quickshell bar      │                   │ matugen-bridge.uc.js       │
-│ (wallpaper switch)  │                   │ (chrome process)           │
-└─────────────────────┘                   │                            │
-                                          │ 1. reads JSON              │
-                                          │ 2. setStringPref ×8        │
-                                          │    (matugen.theme.*)       │
-                                          │ 3. apply to :root inline   │
-                                          │ 4. broadcast to actors     │
-                                          └──────────┬─────────────────┘
-                                                     │ sendAsyncMessage
-                                                     ▼
-                                          ┌────────────────────────────┐
-                                          │ MatugenChild.sys.mjs       │
-                                          │ (content process)          │
-                                          │                            │
-                                          │  - DOMContentLoaded:       │
-                                          │    read prefs, apply vars  │
-                                          │  - Matugen:ApplyVars msg:  │
-                                          │    apply vars from bridge  │
-                                          └──────────┬─────────────────┘
-                                                     │ style.setProperty
-                                                     ▼
-                                          userContent.css uses
-                                          var(--matugen-*) — updates
-                                          instantly on inline change
+```sh
+theme_switcher palette /path/to/matugen-vars.json
 ```
 
-Same vars, same theme, both chrome and content. One write to disk
-triggers the whole chain.
+The JSON must have these keys:
 
----
-
-## File map (source → deployed)
-
-| Source | Deployed at | Role |
-| --- | --- | --- |
-| `.config/zen/userChrome.css.template` | `~/.config/zen/<profile>/chrome/userChrome.css` | Chrome CSS. `:root` block has literal `{{*}}` colors; rules use `var(--matugen-*)`. |
-| `.config/zen/userContent.css.template` | `~/.config/zen/<profile>/chrome/userContent.css` | Content CSS. Global `::selection` rule, uses `var(--matugen-*)`. |
-| `.config/zen/user.js.template` | `~/.config/zen/<profile>/user.js` | Enables `userChromeJS.experimental.enabled`, `devtools.chrome.enabled`, `toolkit.legacyUserProfileCustomizations.stylesheets`. |
-| `.config/zen/fx-autoconfig/profile/chrome/JS/matugen-bridge.uc.js` | same path in profile | The bridge. Polls JSON, sets prefs, applies chrome vars, broadcasts to actors, registers the JSWindowActor. |
-| `.config/zen/fx-autoconfig/profile/chrome/JS/Matugen/MatugenParent.sys.mjs` | same path in profile | Parent actor. No-op; required by `ChromeUtils.registerWindowActor`. |
-| `.config/zen/fx-autoconfig/profile/chrome/JS/Matugen/MatugenChild.sys.mjs` | same path in profile | Child actor. Sets `var(--matugen-*)` on content `documentElement`. |
-| `scripts/theme_switcher` (built) | `~/doty/scripts/theme_switcher` | The deployed Rust binary. wabi/Quickshell runs this on wallpaper change. |
-| `.config/hypr/wabi/src/bin/theme/switcher.rs` | builds `target/release/theme_switcher` | Source. Renders templates, copies bridge + actors, writes `matugen-vars.json`, removes legacy files. |
-
-Generated at runtime (not in source):
-- `~/.config/zen/<profile>/chrome/matugen-vars.json` — the 8-color JSON.
-- `~/.config/zen/<profile>/chrome/matugen-bridge.log` — file-based debug
-  log; easier than digging through `console.log` in Browser Toolbox.
-
----
-
-## How to use it
-
-### Manual theme switch
-
-```bash
-cd /home/parazeeknova/doty/.config/hypr/wabi
-cargo run --bin theme_switcher -- preset gruvbox
+```json
+{
+  "accent":      "#fcb974",
+  "bg":          "#19120c",
+  "bg_dark":     "#261e18",
+  "bg_light":    "#50453a",
+  "fg":          "#eee0d5",
+  "fg_light":    "#cdb89e",
+  "secondary":   "#3a3027",
+  "tertiary":    "#5a4c40"
+}
 ```
 
-This:
-1. Renders `userChrome.css.template` and `userContent.css.template` with
-   the gruvbox palette, writes them to both profiles.
-2. Copies `matugen-bridge.uc.js` and the `Matugen/` actor files into
-   both profiles.
-3. Writes `matugen-vars.json` with the 8 gruvbox colors.
+### Per-site toggling
 
-The bridge picks up the mtime change on its next 1s tick and applies.
+To disable a site theme without removing the file, rename it to drop
+the `.css` extension — the bridge only loads `matugen-userstyles*.css`.
 
-### Wallpaper change (the real path)
+### Per-profile
 
-Quickshell detects wallpaper change → runs
-`~/doty/scripts/theme_switcher wallpaper <path>`. The switcher calls
-`matugen` against the new wallpaper, gets a fresh palette, runs the
-same template/copy/JSON flow.
+The bridge auto-detects the running profile by reading its own
+location at startup. Two Zen profiles running side-by-side are
+fully isolated: each has its own `matugen-vars.json` watcher and
+its own set of injected styles.
 
-### Restart Zen
+### Logs
 
-When you actually change `userChrome.css` or `userContent.css` (not
-just the colors, but the *rules*), you need to restart Zen — Firefox
-only re-reads those files on startup. The bridge handles color
-changes at runtime; structural CSS changes need a restart.
-
-### Debugging
-
-```bash
-tail -f "/home/parazeeknova/.config/zen/v1oocp83.Default (release)/chrome/matugen-bridge.log"
+```sh
+tail -f ~/.config/zen/<profile>/chrome/matugen-bridge.log
 ```
 
-Expected on a healthy theme switch:
+The log is overwritten on every restart (the bridge opens it with
+`O_TRUNC`). The actor child re-forwards its log lines to the parent
+via `sendSyncMessage`, so this single file is the only place you need
+to look.
+
+---
+
+## Repository layout
 
 ```
-[matugen-bridge] [INFO] matugen-vars.json mtime changed: ...
-[matugen-bridge] [INFO] Wrote 8 prefs from matugen-vars.json
-[matugen-bridge] [INFO] Applied 8 vars to chrome :root
-[matugen-bridge] [INFO] Broadcast to N/N tab actors (skipped=0)
+zen-wabi/
+├── README.md                        ← you are here
+├── .gitignore
+├── userChrome.css.template          ← Zen chrome (9 sections)
+├── userContent.css.template         ← global :root vars + about:*
+├── userContent.github.template      ← github.com / *.github.com
+├── user.js.template                 ← required Zen prefs
+├── fx-autoconfig/
+│   ├── program/
+│   │   ├── config.js                ← fx-autoconfig entry
+│   │   └── defaults/pref/
+│   │       └── config-prefs.js
+│   └── profile/chrome/
+│       ├── utils/                   ← fx-autoconfig runtime
+│       │   ├── boot.sys.mjs
+│       │   ├── chrome.manifest
+│       │   ├── fs.sys.mjs
+│       │   ├── module_loader.mjs
+│       │   ├── uc_api.sys.mjs
+│       │   └── utils.sys.mjs
+│       └── JS/
+│           ├── matugen-bridge.uc.js ← theme_switcher ↔ actors
+│           └── Matugen/
+│               ├── MatugenParent.sys.mjs
+│               └── MatugenChild.sys.mjs
+├── docs/                            ← per-site how-tos (see Contributing)
+│   ├── ADDING-A-SITE.md
+│   ├── THEMING-RULES.md
+│   └── DEBUGGING.md
+└── sites/                           ← per-site userstyles (planned)
+    ├── github.userstyles.template
+    └── ...
 ```
 
-`N/N skipped=0` means every loaded tab got the message. Background
-tabs are handled lazily via `DOMContentLoaded` when you switch to them.
+---
 
-For deeper debugging, `Ctrl+Shift+Alt+I` opens the Browser Toolbox
-(chrome process console). The bridge also logs to `console.log`
-alongside the file log.
+## Risks & limitations
+
+> **Read this section before reporting an issue.** Most "the theme
+> broke" reports are one of these.
+
+### Hard risks
+
+- **fx-autoconfig required.** Without it, the bridge script never
+  loads and the actor never registers. Zen 1.20 ships without
+  autoconfig enabled by default — install it from
+  [https://github.com/MrOtherGuy/fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig).
+- **`userChromeJS.experimental.enabled = true` must be set.** The
+  JSWindowActor runtime is gated behind this pref. If it's missing,
+  the bridge logs `ChromeUtils.registerWindowActor is not a function`.
+- **CSS variables don't cross document boundaries.** Chrome vars
+  (`:root` in `userChrome.css`) are not visible in content documents.
+  That's why we re-set `--matugen-*` on `html[data-color-mode]` in
+  `userContent.github.template` — a second copy of the variables.
+- **`@-moz-document` is ignored in injected `<style>` elements.** It
+  only works in `userContent.css`. Per-site stylesheets are filtered
+  by hostname **on the parent side** before the actor ever sees them.
+- **Single `export class` per ESM file.** Defining `MatugenChild`
+  twice in the same file (e.g. once at the top, once in an alternate
+  import path) throws `SyntaxError: Identifier 'MatugenChild' has
+  already been declared` at MODULE LOAD — not at first use.
+- **CSS in `userContent.css` is unreliable on Zen 1.20.1b.** The
+  pref exists but doesn't always load. We compensate by injecting
+  the same rules via the actor.
+
+### Soft limitations
+
+- **No form control theming in `userChrome.css`.** `<input
+  type="checkbox">` etc. would leak styling to every website. The
+  GitHub ruleset themes the in-content checkboxes via
+  `[class*="prc-Checkbox-Checkbox"]` selectors instead.
+- **GitHub Primer hashes can rotate.** Today the rule is
+  `[class*="prc-Button-ButtonBase"]`. If GitHub renames the
+  module, the wildcard still matches (it falls through to the
+  prefix), but a renamed module needs a new rule.
+- **Two Zen profiles = two bridges.** Each profile has its own
+  `chrome/` and its own actor registration. Switching wallpapers
+  only refreshes the active profile's tabs.
+- **Smooth transitions have a small perf cost.** `transition: *` on
+  `*` is ~0.5% extra paint time on slow GPUs. Negligible on modern
+  hardware, noticeable on a 2015 ThinkPad.
+- **No wayland-specific features.** This is a CSS / JS layer; it
+  has nothing to do with Wayland. It will work in any Zen session.
+
+### Known visual nits
+
+- The "Public" repo badge is the `--color-btn-primary-bg` accent on
+  `--color-fg-on-emphasis` dark text. On very low-contrast palettes
+  the badge may be hard to read. Fix in
+  `userContent.github.template:Label--secondary` rule.
+- GitHub's search filter input has a hidden measurement mirror div
+  (`aria-hidden="true"`) that GitHub uses to size the input. We push
+  it off-screen with `position: absolute; top: -9999px; visibility:
+  hidden`. If you remove that rule, the input will show duplicate
+  text.
 
 ---
 
-## Known gotchas (so I don't re-learn them)
+## Roadmap / TODOs
 
-1. **`make sync` can fail silently** if any of the deployed binaries
-   is busy. Always check `ls -la ~/doty/scripts/theme_switcher` and
-   compare to the source `target/release/theme_switcher`. The
-   timestamp and size should match.
+### Short term
 
-2. **Fission is on by default in Zen.** No `loadFrameScript`. If you
-   want code in content processes, you need a JSWindowActor. Period.
+- [ ] **More sites.** Add userstyles for: YouTube, Reddit, Mastodon
+      instances, Hacker News, Twitter/X, Gmail, Google Docs, Notion,
+      Linear, Figma. The GitHub file is the reference implementation.
+- [ ] **Light-palette first-class support.** Right now everything
+      assumes `--matugen-bg` is the darkest. On a true light palette
+      that breaks — `bg` is the lightest, `bg-dark` is the medium
+      surface. The CSS uses `color-mix(in srgb, ...)` in a few
+      places to handle this, but the rule order needs auditing.
+- [ ] **CSS variable parity check.** Confirm that the chrome
+      variables and the content variables don't drift. Right now
+      they're duplicated in `userChrome.css.template` and
+      `userContent.github.template`; a single source of truth would
+      be better.
+- [ ] **Auto-extract PrimeReact / Material / Chakra tokens.** Add
+      a small CLI that walks a site, finds the CSS vars it actually
+      uses, and emits a starter template.
 
-3. **`Services.io.newFileURI(chrome://...)` throws.** Use
-   `Services.dirsvc.get("UChrm", Ci.nsIFile)` to get the profile's
-   chrome dir.
+### Medium term
 
-4. **`@WindowActor` directive in fx-autoconfig is limited.** It
-   hardcodes `remoteTypes: ["privilegedabout", null]` — wrong for
-   actors that need to attach to web content. Register manually
-   with `ChromeUtils.registerWindowActor` instead.
+- [ ] **Per-site config files** with per-site settings (toggle
+      animations, force dark mode for the page, override the danger
+      color, etc.). Move the hostname-match table out of the
+      bridge into a JSON config.
+- [ ] **Hover-state color extraction.** Generate accent-tinted
+      hover states automatically from the base accent, instead of
+      hand-writing `color-mix(in srgb, accent 88%, fg 12%)` for
+      every button.
+- [ ] **Wider Zen coverage.** Sidebery workspace indicator, Zen
+      Glance, Zen Split View, Zen Picture-in-Picture, Zen Modals.
+      These are all `userChrome.css` work.
+- [ ] **A "dev mode" that pulls the live matugen JSON from the
+      current wallpaper and re-applies every N seconds** so you can
+      see the theme work without actually changing wallpaper.
 
-5. **`@WindowActorMatches` is parsed as JSON.** No single quotes.
-   `["<all_urls>"]`, not `'["<all_urls>"]'`.
+### Long term
 
-6. **Pref observers fire per `setStringPref`.** If you set 8 prefs in
-   a loop, you get 8 observer firings. Suppress the broadcast during
-   the batch, then call `onPrefChange()` once at the end.
+- [ ] **Native theming API.** Replace the `theme_switcher` shell-out
+      with a D-Bus signal that the bridge listens for. Eliminates
+      the file-watcher round-trip and works in non-Linux WMs.
+- [ ] **Theme presets** that ship as `.json` files — "Catppuccin
+      Mocha", "Gruvbox", "Nord", "Rose Pine", etc. — selectable
+      independent of the wallpaper. Useful for screenshots and
+      accessibility audits.
+- [ ] **A webview-mode theme picker** — a Zen sidebar panel that
+      lets you switch palettes without leaving the page you're
+      theming.
+- [ ] **A Figma plugin** that exports a site's design tokens into
+      the matugen JSON format.
 
-7. **CSS variables don't cross document boundaries.** Chrome
-   `:root` vars are invisible to content. Must use a JSWindowActor
-   child to set vars on each content `document.documentElement`.
+### Done (recent)
 
-8. **Inline `style.setProperty` wins over CSS rules.** When the
-   bridge sets `documentElement.style.setProperty('--matugen-accent', ...)`,
-   it overrides anything in the `:root` block of `userChrome.css` /
-   `userContent.css`. That's why the templates can have literal
-   first-paint defaults in `:root` — they get clobbered the moment
-   the bridge runs.
-
-9. **`currentWindowGlobal` is null for unloaded tabs.** Background
-   tabs that haven't been loaded yet don't have a `currentWindowGlobal`,
-   so `wg.getActor("Matugen")` returns null for them. The 1/25 ratio
-   in the log is normal — the rest pick up the theme via
-   `DOMContentLoaded` when you switch to them.
-
-10. **`general.config.sandbox_enabled = false` is no longer needed.**
-    fx-autoconfig works without it. Don't add it; it can cause
-    weirdness with newer Firefox/Zen builds.
-
----
-
-## What's still rough
-
-- **No form-control theming in userChrome.css.** I deliberately kept
-  the `:root` color tokens off bare `button`, `image`, etc. selectors,
-  because those leak to websites and override native HTML form
-  controls. If you want checkbox/radio accent, scope it to chrome-only
-  ancestors (e.g. `#navigator-toolbox button`).
-
-- **Bridge polls every 1s.** Not free, but cheap. Could be replaced
-  with a file watcher (`nsIFileWatcher`) if it ever shows up in
-  profiles. Not worth optimizing yet.
-
-- **No de-duplication of color writes.** If wabi writes the exact
-  same JSON twice in a row, the bridge still re-applies. The
-  `setStringPref` is a no-op for unchanged values (no observer
-  fires), so the only wasted work is the mtime check. Fine.
-
-- **Two profiles, double the deployed files.** Could be DRYed with
-  symlinks, but symlinks to userChrome.js files in `chrome/JS/` are
-  flaky in some Firefox/Zen versions. Just copy.
-
-- **No automation for first-time setup.** If you blow away a profile
-  you have to re-run the `sync` target and restart Zen. Not a big
-  deal for me, but worth knowing.
+- [x] Matugen CSS variables on `:root` for both chrome and content.
+- [x] JSWindowActor-based content injection (survives Fission).
+- [x] 109 `[class*="prc-..."]` wildcards covering all Primer modules
+      used on profile, dashboard, and repo pages.
+- [x] File tree, file preview, file nav bar, header bar, action
+      buttons, PR/issue list, filter search bar — all themed.
+- [x] Smooth 0.35s color transitions on theme switch.
+- [x] Transparent user-status button + circle badge.
+- [x] Removed Refined GitHub heat-map coloring on `<relative-time>`.
 
 ---
 
-## Lessons (in case it helps someone else)
+## Contributing
 
-1. **If you're fighting the platform, you're probably using the
-   wrong mechanism.** The data: URI crash era was me trying to
-   outsmart the actor module loader. Prefs are boring; prefs work.
+**The main objective of this project is for contributors to add
+support for new websites and to improve the GitHub coverage.** The
+GitHub file is the reference implementation — copy its style, copy
+its conventions, and submit a PR.
 
-2. **The Fission / multi-process constraint is real.** If you want
-   to push values from chrome to content, learn JSWindowActor. It's
-   not that hard; it's just not what 2008-era Firefox tutorials teach.
+### Quick start
 
-3. **fx-autoconfig is great, but read `boot.sys.mjs` before
-   trusting its `@WindowActor` directive.** The defaults it picks
-   are wrong for actors that need to attach to web content.
+1. Fork this repo.
+2. Add a `sites/<sitename>.userstyles.template` file (see
+   [docs/ADDING-A-SITE.md](docs/ADDING-A-SITE.md)).
+3. If the site needs an exact hostname match (e.g. `youtube.com`
+   but not `youtube-nocookie.com`), update the bridge's hostname
+   table — see the inline comment in
+   `fx-autoconfig/profile/chrome/JS/matugen-bridge.uc.js`.
+4. Submit a PR with:
+   - the new template file,
+   - any bridge changes (rare),
+   - a screenshot of before/after,
+   - a one-line entry in this README's "Features" section.
 
-4. **When `make sync` says "nothing to do", it might mean
-   "couldn't do it".** Always verify the deployed binary matches
-   the source.
+### Adding a new site
 
-5. **Log to a file in the profile dir.** Easier than fishing
-   through Browser Toolbox output, survives across restarts,
-   easy to grep.
+See [docs/ADDING-A-SITE.md](docs/ADDING-A-SITE.md) for a full
+walkthrough. TL;DR:
 
-6. **1/25 isn't 0/25.** The actor system is lazy for a reason.
-   Don't panic when not every tab shows up in the broadcast log.
+1. Generate a `.css.template` from the site's design tokens.
+2. Use the 8 matugen variables — never hardcode hex.
+3. Use `[class*="..."]` wildcards for hashed class names.
+4. Aim for "blends to page bg" — not "every box is a card".
+5. Test on at least: profile/account, dashboard/home, a content
+   page, a search/filter page, and a modal.
+
+### Theming rules & conventions
+
+See [docs/THEMING-RULES.md](docs/THEMING-RULES.md) for the
+non-obvious ones. The short version:
+
+- **`bg` = page background, `bg-dark` = card surface, `bg-light` =
+  hover/elevated.** Don't use `bg-light` for body backgrounds; it
+  reads as a "raised" color.
+- **No `border: 1px solid` on action buttons.** Use `bg-dark` with
+  no border; the bg difference is the affordance.
+- **Accent is for links, focus rings, and the accent border on
+  popups.** Don't tint large surfaces with accent — it makes the
+  whole page vibrate.
+- **Never round the corners.** This is a sharp / flat theme. If
+  the site uses `border-radius: 8px`, set it to `0`.
+- **Transitions only on `background-color`, `color`,
+  `border-color`, `fill`, `stroke`, `box-shadow`.** Don't add
+  `transition: all` — it animates `transform` and `opacity` on
+  spinners, which is wrong.
+
+### Debugging tips
+
+See [docs/DEBUGGING.md](docs/DEBUGGING.md). The 30-second version:
+
+```sh
+# is the bridge alive?
+tail -f ~/.config/zen/<profile>/chrome/matugen-bridge.log
+
+# did the CSS file get rendered?
+ls -la ~/.config/zen/<profile>/chrome/matugen-userstyles*.css
+
+# is the actor registered? (open about:debugging → This Firefox → tabs)
+# search for "MatugenChild" in the process list
+```
+
+For inspecting a specific element, use `about:devtools-toolbox` →
+Inspector → click the element → look at the `Style` panel for
+`background-color: var(--matugen-...)`. If a `!important` rule from
+GitHub's Primer is winning, prefix your override with `:where()` to
+keep specificity at 0, or use `[class*="..."]` with a longer
+suffix.
 
 ---
 
-## TL;DR
+## License
 
-- Switcher writes `matugen-vars.json`.
-- `matugen-bridge.uc.js` polls it, sets `matugen.theme.*` prefs.
-- Bridge sets `--matugen-*` CSS vars on chrome `:root` via inline style.
-- Bridge broadcasts to `Matugen` JSWindowActor (registered via
-  `ChromeUtils.registerWindowActor` from inside the bridge, NOT via
-  fx-autoconfig's `@WindowActor` directive, because that one picks
-  wrong `remoteTypes`).
-- Child actor sets the same vars on content `documentElement` for
-  every loaded tab, and on `DOMContentLoaded` for tabs that load
-  later.
-- CSS uses `var(--matugen-*)` everywhere. Theme switches live.
-- No Zen restart needed for color changes.
+MIT. See the source headers — the original fx-autoconfig runtime
+files retain their respective licenses (BSD-2-Clause for utils.*,
+MPL-2.0 for the bridge).
