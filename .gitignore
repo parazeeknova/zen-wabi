@@ -1,0 +1,28 @@
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Build artifacts
+target/
+*.o
+*.so
+*.dll
+*.exe
+node_modules/
+dist/
+build/
+
+# Generated theme files (re-rendered from templates by theme_switcher)
+matugen-userstyles*.css
+matugen-vars.json
+matugen-bridge.log
+userChrome.css
+userContent.css
+
+# Per-user deployment paths — keep templates, drop deployed copies
+# The repo ships .template files; users run the theme_switcher to render.
