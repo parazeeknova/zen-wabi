@@ -49,7 +49,8 @@ function readPrefs() {
 
 function applyVars(values) {
   if (!values) return;
-  const doc = this.document || (this.contentWindow && this.contentWindow.document);
+  const doc =
+    this.document || (this.contentWindow && this.contentWindow.document);
   if (!doc) return;
   const root = doc.documentElement;
   if (!root) return;
@@ -64,7 +65,8 @@ function applyVars(values) {
 function injectUserstyles(css) {
   if (!css) return;
   _lastInjectedCss = css;
-  const doc = this.document || (this.contentWindow && this.contentWindow.document);
+  const doc =
+    this.document || (this.contentWindow && this.contentWindow.document);
   if (!doc) return;
   const head = doc.head || doc.documentElement;
   if (!head) return;
@@ -81,7 +83,9 @@ function injectUserstyles(css) {
 
 function setupMutationObserver(doc) {
   if (_observer) {
-    try { _observer.disconnect(); } catch (e) {}
+    try {
+      _observer.disconnect();
+    } catch (e) {}
     _observer = null;
   }
   if (!doc || !doc.body) return;
@@ -110,14 +114,20 @@ export class MatugenChild extends JSWindowActorChild {
         this.sendAsyncMessage("Matugen:ChildLog", `applyVars error: ${e}`);
       }
       try {
-        const hostname = (this.document && this.document.location)
-          ? this.document.location.hostname
-          : "";
+        const hostname =
+          this.document && this.document.location
+            ? this.document.location.hostname
+            : "";
         const css = await this.sendQuery("Matugen:GetUserstyles", { hostname });
-        this.sendAsyncMessage("Matugen:ChildLog", `DCL ${hostname} got ${css ? css.length : 0}B`);
+        this.sendAsyncMessage(
+          "Matugen:ChildLog",
+          `DCL ${hostname} got ${css ? css.length : 0}B`,
+        );
         if (css) {
           injectUserstyles.call(this, css);
-          const doc = this.document || (this.contentWindow && this.contentWindow.document);
+          const doc =
+            this.document ||
+            (this.contentWindow && this.contentWindow.document);
           setupMutationObserver(doc);
         }
       } catch (e) {
@@ -135,8 +145,14 @@ export class MatugenChild extends JSWindowActorChild {
     } else if (message.name === "Matugen:ApplyUserstyles") {
       try {
         const css = message.data;
-        const h = (this.document && this.document.location) ? this.document.location.hostname : "?";
-        this.sendAsyncMessage("Matugen:ChildLog", `ApplyUserstyles msg ${css ? css.length : 0}B -> ${h}`);
+        const h =
+          this.document && this.document.location
+            ? this.document.location.hostname
+            : "?";
+        this.sendAsyncMessage(
+          "Matugen:ChildLog",
+          `ApplyUserstyles msg ${css ? css.length : 0}B -> ${h}`,
+        );
         injectUserstyles.call(this, css);
       } catch (e) {
         this.sendAsyncMessage("Matugen:ChildLog", `ApplyUserstyles err: ${e}`);

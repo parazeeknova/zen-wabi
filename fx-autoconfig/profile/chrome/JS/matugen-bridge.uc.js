@@ -23,14 +23,17 @@ function _logFile() {
 }
 function _appendLog(level, msg) {
   const line = `[matugen-bridge] [${level}] ${msg}\n`;
-  try { console.log(line); } catch (e) {}
+  try {
+    console.log(line);
+  } catch (e) {}
   try {
     const p = _logFile();
     if (p) {
       const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
       file.initWithPath(p);
-      const foStream = Cc["@mozilla.org/network/file-output-stream;1"]
-        .createInstance(Ci.nsIFileOutputStream);
+      const foStream = Cc[
+        "@mozilla.org/network/file-output-stream;1"
+      ].createInstance(Ci.nsIFileOutputStream);
       // PR_WRITE_ONLY | PR_CREATE_FILE | PR_APPEND
       foStream.init(file, 0x02 | 0x08 | 0x10, 0o644, 0);
       foStream.write(line, line.length);
@@ -38,16 +41,24 @@ function _appendLog(level, msg) {
       foStream.close();
     }
   } catch (e) {
-    try { console.log("[matugen-bridge] log write failed: " + e); } catch (e2) {}
+    try {
+      console.log("[matugen-bridge] log write failed: " + e);
+    } catch (e2) {}
   }
 }
-function logInfo(msg) { _appendLog("INFO", msg); }
-function logWarn(msg) { _appendLog("WARN", msg); }
-function logError(msg) { _appendLog("ERROR", msg); }
+function logInfo(msg) {
+  _appendLog("INFO", msg);
+}
+function logWarn(msg) {
+  _appendLog("WARN", msg);
+}
+function logError(msg) {
+  _appendLog("ERROR", msg);
+}
 
 logInfo("SCRIPT TOP — version 1.4");
 
-"use strict";
+("use strict");
 
 const POLL_MS = 1000;
 
@@ -74,8 +85,10 @@ const PREF_TO_VAR = {
 };
 
 const ACTOR_NAME = "Matugen";
-const ACTOR_PARENT_URI = "chrome://userscripts/content/Matugen/MatugenParent.sys.mjs";
-const ACTOR_CHILD_URI = "chrome://userscripts/content/Matugen/MatugenChild.sys.mjs";
+const ACTOR_PARENT_URI =
+  "chrome://userscripts/content/Matugen/MatugenParent.sys.mjs";
+const ACTOR_CHILD_URI =
+  "chrome://userscripts/content/Matugen/MatugenChild.sys.mjs";
 const USERSTYLES_PREFIX = "matugen-userstyles-";
 const USERSTYLES_GLOBAL = "matugen-userstyles.css";
 
@@ -103,13 +116,19 @@ let suppressBroadcast = false;
 
 function readFile(file) {
   try {
-    const fstream = Cc["@mozilla.org/network/file-input-stream;1"]
-      .createInstance(Ci.nsIFileInputStream);
+    const fstream = Cc[
+      "@mozilla.org/network/file-input-stream;1"
+    ].createInstance(Ci.nsIFileInputStream);
     fstream.init(file, -1, 0, 0);
-    const converter = Cc["@mozilla.org/intl/converter-input-stream;1"]
-      .createInstance(Ci.nsIConverterInputStream);
-    converter.init(fstream, "utf-8", 4096,
-      Ci.nsIConverterInputStream.DEFAULT_REPLACEMENT_CHARACTER);
+    const converter = Cc[
+      "@mozilla.org/intl/converter-input-stream;1"
+    ].createInstance(Ci.nsIConverterInputStream);
+    converter.init(
+      fstream,
+      "utf-8",
+      4096,
+      Ci.nsIConverterInputStream.DEFAULT_REPLACEMENT_CHARACTER,
+    );
     let str = "";
     let chunk = {};
     while (converter.readString(4096, chunk)) {
@@ -137,7 +156,9 @@ function loadUserstylesFor(name, file) {
   const oldCss = oldEntry ? oldEntry.css : null;
   userstyles[name] = { css, mtime: file.lastModifiedTime, path: file.path };
   if (oldCss === null || oldCss !== css) {
-    logInfo(`Loaded userstyles[${name}]: ${css.length} bytes from ${file.path}`);
+    logInfo(
+      `Loaded userstyles[${name}]: ${css.length} bytes from ${file.path}`,
+    );
   }
 }
 
@@ -166,7 +187,14 @@ function loadAllUserstyles() {
         logError(`scan entry error: ${e.message}`);
       }
     }
-    if (found > 0) logInfo(`Scanned userstyles dir: ${found} per-site file(s) (${Object.keys(userstyles).filter(k => k !== "global").join(", ")})`);
+    if (found > 0)
+      logInfo(
+        `Scanned userstyles dir: ${found} per-site file(s) (${Object.keys(
+          userstyles,
+        )
+          .filter((k) => k !== "global")
+          .join(", ")})`,
+      );
   } catch (e) {
     logError(`scan userstyles dir: ${e.message}`);
   }
@@ -220,7 +248,9 @@ function applyChromeVars(values) {
 function broadcastToActors(values) {
   if (!values || !Object.keys(values).length) return;
   if (!actorReady) return;
-  let total = 0, sent = 0, skipped = 0;
+  let total = 0,
+    sent = 0,
+    skipped = 0;
   try {
     const windows = Services.wm.getEnumerator("navigator:browser");
     while (windows.hasMoreElements()) {
@@ -230,13 +260,25 @@ function broadcastToActors(values) {
         total++;
         try {
           const browser = tab.linkedBrowser;
-          if (!browser) { skipped++; continue; }
+          if (!browser) {
+            skipped++;
+            continue;
+          }
           const bc = browser.browsingContext;
-          if (!bc) { skipped++; continue; }
+          if (!bc) {
+            skipped++;
+            continue;
+          }
           const wg = bc.currentWindowGlobal;
-          if (!wg) { skipped++; continue; }
+          if (!wg) {
+            skipped++;
+            continue;
+          }
           const actor = wg.getActor(ACTOR_NAME);
-          if (!actor) { skipped++; continue; }
+          if (!actor) {
+            skipped++;
+            continue;
+          }
           actor.sendAsyncMessage("Matugen:ApplyVars", values);
           sent++;
         } catch (e) {
@@ -244,7 +286,9 @@ function broadcastToActors(values) {
         }
       }
     }
-    logInfo(`Broadcast vars to ${sent}/${total} tab actors (skipped=${skipped})`);
+    logInfo(
+      `Broadcast vars to ${sent}/${total} tab actors (skipped=${skipped})`,
+    );
   } catch (e) {
     logError(`broadcastToActors: ${e.message}`);
   }
@@ -252,7 +296,9 @@ function broadcastToActors(values) {
 
 function broadcastUserstyles() {
   if (!actorReady) return;
-  let total = 0, sent = 0, skipped = 0;
+  let total = 0,
+    sent = 0,
+    skipped = 0;
   try {
     const windows = Services.wm.getEnumerator("navigator:browser");
     while (windows.hasMoreElements()) {
@@ -262,13 +308,25 @@ function broadcastUserstyles() {
         total++;
         try {
           const browser = tab.linkedBrowser;
-          if (!browser) { skipped++; continue; }
+          if (!browser) {
+            skipped++;
+            continue;
+          }
           const bc = browser.browsingContext;
-          if (!bc) { skipped++; continue; }
+          if (!bc) {
+            skipped++;
+            continue;
+          }
           const wg = bc.currentWindowGlobal;
-          if (!wg) { skipped++; continue; }
+          if (!wg) {
+            skipped++;
+            continue;
+          }
           const actor = wg.getActor(ACTOR_NAME);
-          if (!actor) { skipped++; continue; }
+          if (!actor) {
+            skipped++;
+            continue;
+          }
           let hostname = "";
           try {
             if (browser.currentURI) hostname = browser.currentURI.host || "";
@@ -285,7 +343,9 @@ function broadcastUserstyles() {
         }
       }
     }
-    logInfo(`Broadcast userstyles to ${sent}/${total} tab actors (skipped=${skipped})`);
+    logInfo(
+      `Broadcast userstyles to ${sent}/${total} tab actors (skipped=${skipped})`,
+    );
   } catch (e) {
     logError(`broadcastUserstyles: ${e.message}`);
   }
@@ -502,7 +562,9 @@ globalThis.__matugenBridge = {
           break;
         }
       }
-      logInfo(`[bridge.getUserstyles] host="${hostname}" suffix="${suffix}" userstyles.global=${userstyles.global ? userstyles.global.css.length : "null"} userstyles.${suffix}=${userstyles[suffix] ? userstyles[suffix].css.length : "null"} -> ${result.length}B`);
+      logInfo(
+        `[bridge.getUserstyles] host="${hostname}" suffix="${suffix}" userstyles.global=${userstyles.global ? userstyles.global.css.length : "null"} userstyles.${suffix}=${userstyles[suffix] ? userstyles[suffix].css.length : "null"} -> ${result.length}B`,
+      );
     } catch (e) {}
     return result;
   },

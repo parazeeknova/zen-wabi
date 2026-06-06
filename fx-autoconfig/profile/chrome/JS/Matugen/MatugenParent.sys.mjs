@@ -38,7 +38,9 @@ function _parentLog(level, msg) {
       console.log(`[MatugenParent] [${level}] ${msg}`);
     }
   } catch (e) {
-    try { console.log(`[MatugenParent] [${level}] ${msg}`); } catch (e2) {}
+    try {
+      console.log(`[MatugenParent] [${level}] ${msg}`);
+    } catch (e2) {}
   }
 }
 
@@ -52,13 +54,19 @@ function _chromeDir() {
 
 function _readFile(file) {
   try {
-    const fstream = Cc["@mozilla.org/network/file-input-stream;1"]
-      .createInstance(Ci.nsIFileInputStream);
+    const fstream = Cc[
+      "@mozilla.org/network/file-input-stream;1"
+    ].createInstance(Ci.nsIFileInputStream);
     fstream.init(file, -1, 0, 0);
-    const converter = Cc["@mozilla.org/intl/converter-input-stream;1"]
-      .createInstance(Ci.nsIConverterInputStream);
-    converter.init(fstream, "utf-8", 4096,
-      Ci.nsIConverterInputStream.DEFAULT_REPLACEMENT_CHARACTER);
+    const converter = Cc[
+      "@mozilla.org/intl/converter-input-stream;1"
+    ].createInstance(Ci.nsIConverterInputStream);
+    converter.init(
+      fstream,
+      "utf-8",
+      4096,
+      Ci.nsIConverterInputStream.DEFAULT_REPLACEMENT_CHARACTER,
+    );
     let str = "";
     let chunk = {};
     while (converter.readString(4096, chunk)) {
