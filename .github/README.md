@@ -30,6 +30,7 @@ fades the entire browser from one look to another.
   - [Table of contents](#table-of-contents)
   - [How it works](#how-it-works)
     - [Why a JSWindowActor?](#why-a-jswindowactor)
+    - [Why Zen Boosts for the universal tint?](#why-zen-boosts-for-the-universal-tint)
   - [Features](#features)
   - [Requirements](#requirements)
   - [Installation](#installation)
@@ -522,8 +523,6 @@ zen-wabi/
 - [ ] **A webview-mode theme picker** — a Zen sidebar panel that
       lets you switch palettes without leaving the page you're
       theming.
-- [ ] **A Figma plugin** that exports a site's design tokens into
-      the matugen JSON format.
 
 ### Done (recent)
 
