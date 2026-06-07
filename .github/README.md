@@ -10,11 +10,14 @@ terminal, status bar, and launcher also re-tints every tab you have open —
 including per-site overrides for sites like GitHub that have their own
 design system.
 
-The repo ships two layers:
+The repo ships three layers:
 
 1. **Browser chrome** — Zen's own UI (`userChrome.css` + `userContent.css`).
 2. **Per-site userstyles** — content CSS injected into matching hostnames
-   via a JSWindowActor. Currently: `github.com` and subdomains.
+   via Zen Boosts' `customCSS` field. Currently: `github.com` and
+   subdomains.
+3. **Universal tint** — every visited http(s) domain gets a Zen Boost
+   that drives Zen's C++ color-boost layer from the matugen accent.
 
 Both layers read `--matugen-*` CSS variables, so a single palette change
 fades the entire browser from one look to another.
@@ -62,6 +65,55 @@ fades the entire browser from one look to another.
 
 ## How it works
 
+```
+┌──────────────────┐    JSON     ┌──────────────────┐
+│  wallpaper       │────────────▶│  theme_switcher  │
+│  switcher (QML)  │             │  (Rust binary)   │
+└──────────────────┘             └────────┬─────────┘
+                                           │ renders templates
+                                           ▼
+                           ┌──────────────────────────────┐
+                           │  ~/.config/zen/<profile>/    │
+                           │  chrome/                     │
+                           │    matugen-vars.json         │
+                           │    matugen-userstyles.css    │
+                           │    matugen-userstyles-       │
+                           │         github.css           │
+                           └────────┬─────────────────────┘
+                                    │ mtime watcher
+                                    ▼
+                           ┌──────────────────────────────┐
+                           │  matugen-bridge.uc.js        │
+                           │  (fx-autoconfig chrome side) │
+                           │   • sets prefs (8 vars)      │
+                           │   • updates :root in chrome  │
+                           │   • broadcasts to actors     │
+                           │   • syncs per-site CSS into  │
+                           │     Zen Boosts (customCSS)   │
+                           │   • creates universal Zen    │
+                           │     Boosts for visited       │
+                           │     http(s) domains          │
+                           │   • syncs workspace gradient │
+                           │     or HSL fallback          │
+                           └────────┬──────────┬──────────┘
+                                    │          │
+                            actor   │          │ Zen Boosts API
+                          messages  │          ▼
+                                    │  ┌──────────────────────┐
+                                    │  │  ZenBoostsParent     │
+                                    │  │   • reads customCSS  │
+                                    │  │   • registers as     │
+                                    │  │     AGENT_SHEET      │
+                                    │  │   • drives C++       │
+                                    │  │     color-boost      │
+                                    │  └────────┬─────────────┘
+                                    │           │
+                          ┌─────────▼──┐    ┌──▼──────────────┐
+                          │ Matugen    │    │ ZenBoostsChild  │
+                          │ Child      │    │  (per process)  │
+                          │ • :root    │    │  • applies CSS  │
+                          │ • userCSS  │    │  • applies tint │
+                          └────────────┘    └─────────────────┘
 ```
 ┌──────────────────┐    JSON     ┌──────────────────┐
 │  wallpaper       │────────────▶│  theme_switcher  │
@@ -120,6 +172,21 @@ into the content process. The actor approach:
 - survives Fission (multi-process) — each content process has its own
   `MatugenChild`.
 
+For per-site CSS injection we now **prefer Zen Boosts' `customCSS`
+field** over the actor — Zen handles the `AGENT_SHEET` registration
+and Fission correctly out of the box. The actor is kept for the
+`:root` variable push (which Zen Boosts don't expose a public API
+for) and as a fallback for per-site content.
+
+### Why Zen Boosts for the universal tint?
+
+Zen's C++ color-boost layer is what actually tints pixel content on
+a page (think: an HSL hue shift applied as a paint pass). It reads
+from the active Zen Boost's dot-picker knobs (HSL) or from
+`workspace.theme.gradientColors[primary].c` when `autoTheme: true`.
+By creating one boost per visited domain, we get this tint for free
+on every site — no per-site CSS template needed.
+
 ---
 
 ## Features
@@ -127,10 +194,18 @@ into the content process. The actor approach:
 - **Hot reload, no restart.** Change wallpapers and every open tab
   fades from the old palette to the new one in 0.35s. No reload, no
   flicker.
-- **Per-site overrides.** The bridge ships `matugen-userstyles.css`
-  globally and `matugen-userstyles-<site>.css` per supported site.
-  Hostname matching is suffix-based: `gist.github.com` matches the
-  github file.
+- **Universal Zen Boost tint (quick path).** Every visited http(s)
+  domain auto-gets a Zen Boost that drives Zen's C++ color-boost
+  layer from your matugen accent. Zero config — just visit a site.
+  Hot-swaps on every wallpaper change.
+- **Per-site overrides (detailed path).** The bridge ships
+  `matugen-userstyles-<site>.css` per supported site. Contents are
+  pushed into the site's Zen Boost `customCSS` field (registered
+  as `AGENT_SHEET`). Currently: `github.com` and subdomains.
+  **GitHub coverage is functional but a work in progress** — most
+  pages look right, but specific elements (Pinned cards on the
+  dashboard, some dropdowns, niche admin pages) still leak the
+  default Primer styling. Pull requests welcome.
 - **No hardcoded CSS class names** for Primer/React components. Every
   `prc-ModuleName-HASH` selector is written as `[class*="prc-ModuleName"]`
   so GitHub's nightly deploys don't break the theme.
@@ -143,13 +218,15 @@ into the content process. The actor approach:
 - **Catppuccin-faithful accents.** The 26 Catppuccin colors are mapped
   to 8 matugen variables; the danger color stays a neutral rose that
   reads correctly on both warm and cool palettes.
-- **Mature GitHub coverage.** Profile, dashboard, repo page (file
-  tree, header, action buttons, PR/issue lists, filter chips), Copilot
-  chat input, search suggestions, and the user status pill are all
-  themed.
 - **Per-profile isolation.** Each Zen profile under
   `~/.config/zen/<profile>/chrome/` is independent. You can theme one
   profile for work and another for personal without cross-talk.
+- **Workspaces-aware.** With Zen Workspaces enabled, the bridge
+  pushes the accent into your active workspace's gradient palette
+  and fires `zen-space-gradient-update` so the C++ layer re-tints.
+  With Workspaces disabled, it falls back to writing the accent as
+  HSL (`dotAngleDeg`/`saturation`/`brightness`) directly on each
+  universal boost.
 
 ---
 
@@ -381,14 +458,31 @@ zen-wabi/
 
 ### Soft limitations
 
-- **No form control theming in `userChrome.css`.** `<input
-  type="checkbox">` etc. would leak styling to every website. The
-  GitHub ruleset themes the in-content checkboxes via
-  `[class*="prc-Checkbox-Checkbox"]` selectors instead.
+- **GitHub coverage is a work in progress.** The template is
+  3700+ lines and covers most pages, but specific elements still
+  leak the default Primer styling — dashboard Pinned cards, some
+  dropdown menus, niche admin pages. The universal Zen Boost tint
+  handles these cases gracefully (it tints *every* site), but the
+  explicit per-site CSS is under active finetuning. PRs welcome.
 - **GitHub Primer hashes can rotate.** Today the rule is
   `[class*="prc-Button-ButtonBase"]`. If GitHub renames the
   module, the wildcard still matches (it falls through to the
   prefix), but a renamed module needs a new rule.
+- **Universal Zen Boost creates a boost per domain.** Every http(s)
+  domain you visit gets a boost entry in `zen-boosts.json`. Over
+  months of browsing this can grow to hundreds of entries. Zen
+  handles this fine (the JSON is re-read on every boost lookup)
+  but if you're a privacy-sensitive user, prune the file
+  periodically.
+- **Universal tint is hue-only.** It does not restyle surfaces,
+  borders, or text contrast. It changes the hue of whatever the
+  page already shows. For sites where the default is white-on-white
+  in light mode, the tint won't fix readability — use a per-site
+  template for those.
+- **No form control theming in `userChrome.css`.** `<input
+  type="checkbox">` etc. would leak styling to every website. The
+  GitHub ruleset themes the in-content checkboxes via
+  `[class*="prc-Checkbox-Checkbox"]` selectors instead.
 - **Two Zen profiles = two bridges.** Each profile has its own
   `chrome/` and its own actor registration. Switching wallpapers
   only refreshes the active profile's tabs.
@@ -469,6 +563,21 @@ zen-wabi/
 
 - [x] Matugen CSS variables on `:root` for both chrome and content.
 - [x] JSWindowActor-based content injection (survives Fission).
+- [x] **Zen Boost universal tint.** Every visited http(s) domain
+      auto-gets a Zen Boost driving the C++ color-boost layer from
+      the matugen accent. Hot-swaps on every wallpaper change.
+- [x] **Zen Boost per-site CSS.** Per-site templates are pushed
+      into the site's Zen Boost `customCSS` field (AGENT_SHEET),
+      eliminating the need for our own actor to handle per-site
+      injection.
+- [x] **Workspace gradient sync.** Bridge pushes the matugen
+      accent into `gZenWorkspaces.getActiveWorkspace().theme.gradientColors`
+      and fires `zen-space-gradient-update`. With workspaces
+      disabled, falls back to HSL on each universal boost.
+- [x] **Rename-to-disable.** Renaming
+      `matugen-userstyles-<site>.css` to `.css.disabled` clears
+      the per-site CSS from the boost; the domain falls through
+      to the universal tint.
 - [x] 109 `[class*="prc-..."]` wildcards covering all Primer modules
       used on profile, dashboard, and repo pages.
 - [x] File tree, file preview, file nav bar, header bar, action
@@ -489,15 +598,22 @@ its conventions, and submit a PR.
 ### Quick start
 
 1. Fork this repo.
-2. Add a `sites/<sitename>.userstyles.template` file (see
-   [docs/ADDING-A-SITE.md](docs/ADDING-A-SITE.md)).
-3. If the site needs an exact hostname match (e.g. `youtube.com`
-   but not `youtube-nocookie.com`), update the bridge's hostname
-   table — see the inline comment in
-   `fx-autoconfig/profile/chrome/JS/matugen-bridge.uc.js`.
+2. **Decide which path you need:**
+   - **Quick path (universal Zen Boost tint)** — works for every
+     site out of the box, no code changes. See the top of
+     [docs/ADDING-A-SITE.md](docs/ADDING-A-SITE.md).
+   - **Detailed path (per-site CSS template)** — copy the
+     GitHub template as a starting point and write per-site
+     overrides. See the rest of
+     [docs/ADDING-A-SITE.md](docs/ADDING-A-SITE.md).
+3. If you take the detailed path, add a `BOOST_SITES` entry in
+   `fx-autoconfig/profile/chrome/JS/matugen-bridge.uc.js` (the
+   table at the top of the file). This binds the hostname to a
+   CSS file.
 4. Submit a PR with:
-   - the new template file,
-   - any bridge changes (rare),
+   - the new template file (or just the bridge change if you only
+     fixed a regression),
+   - the corresponding `BOOST_SITES` entry,
    - a screenshot of before/after,
    - a one-line entry in this README's "Features" section.
 

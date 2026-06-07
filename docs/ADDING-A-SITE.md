@@ -1,12 +1,53 @@
 # Adding a new site
 
-This guide walks through adding theming support for a new website. The
-GitHub file (`userContent.github.template`) is the reference
-implementation — copy its style, copy its conventions.
+There are **two ways** to add theming for a new website. Most users
+only need the first one.
 
-The expected outcome: a `sites/<sitename>.userstyles.template` file
-that, when rendered by `theme_switcher`, produces a CSS file the bridge
-will auto-inject for matching hostnames.
+## Quick path: Zen Boost universal tint (0 minutes)
+
+The bridge auto-creates a **Zen Boost** for every http(s) domain you
+visit. The boost enables Zen's built-in C++ color-boost layer and
+points it at your matugen accent. The result: every website gets a
+hue-tinted version of itself that swaps within ~3 seconds of a
+wallpaper change.
+
+**You don't have to do anything.** Just visit a site. On the next
+poll cycle, `~/.config/zen/<profile>/zen-boosts.json` will gain an
+entry for the domain, and the page will be tinted.
+
+If you want to remove the tint for a specific domain, open
+`about:config` → search `zen.boosts.` → delete the entry, or use
+Zen's built-in Boosts UI (hamburger menu → Boosts → toggle off).
+
+> The universal tint is a quick, "good enough for everything" layer.
+> It does **not** restyle buttons, surfaces, borders, or text
+> contrast. It only changes the hue of the existing colors. For
+> sites where you want full theme control (dark mode enforcement,
+> custom hover states, hidden chrome elements), use the detailed
+> path below.
+
+## Detailed path: per-site CSS template (hours)
+
+For sites where the universal tint isn't enough — dark backgrounds,
+re-themed buttons, hidden UI noise, custom scrollbars — write a
+`matugen-userstyles-<site>.css` template. The GitHub file
+(`userContent.github.template`) is the reference implementation —
+copy its style, copy its conventions.
+
+**Status of the GitHub template: functional but a work in progress.**
+Top bar, sidebar, file tree, file preview, repo header, action
+buttons, PR/issue list, Copilot chat, search suggestions, and the
+profile-side vcard are all themed and look correct. Specific
+properties still leak through on dashboard "Pinned" cards, certain
+dropdowns, and niche admin pages. We're actively finetuning.
+Pull requests welcome — see the conventions in
+[THEMING-RULES.md](THEMING-RULES.md) before submitting.
+
+The expected outcome: a `userContent.<site>.template` file that,
+when rendered by `theme_switcher`, produces
+`matugen-userstyles-<site>.css` in your Zen chrome dir. The bridge
+detects it, pushes the contents into a Zen Boost's `customCSS`
+field (registered as `AGENT_SHEET`), and the page re-themes itself.
 
 ---
 
@@ -23,15 +64,34 @@ you ship a file for `github.com`, it will match `github.com`,
 | `matugen-userstyles-reddit.css`  | `reddit.com`, `old.reddit.com` |
 
 **Decide the suffix carefully.** You almost always want the registrable
-domain, not a subdomain.
+domain, not a subdomain. The bridge has a per-site config table in
+`BOOST_SITES` (in `matugen-bridge.uc.js`):
+
+```js
+const BOOST_SITES = {
+  "github.com": {
+    cssFile: "matugen-userstyles-github.css",
+    options: { /* dot picker knobs, see file */ },
+  },
+  // add your site here
+  "youtube.com": {
+    cssFile: "matugen-userstyles-youtube.css",
+    options: { ... },
+  },
+};
+```
+
+Domains not in `BOOST_SITES` get the universal Zen Boost tint and no
+explicit CSS. The bridge falls through to the universal path
+automatically if a `BOOST_SITES` entry's file is missing (the
+log line `Per-site CSS for <domain> missing, falling back to
+universal tint` confirms this).
 
 > Edge case: some sites use different subdomains with completely
 > different designs (e.g. `docs.google.com` vs `mail.google.com`).
 > For those, drop a `docs.userContent.google.template` and a
-> `mail.userContent.google.template` separately. The bridge
-> matches the longest suffix first, so the more specific file
-> wins. (This is a planned feature; check the bridge log for the
-> current match table.)
+> `mail.userContent.google.template` separately. Add a matching
+> `BOOST_SITES` entry for each subdomain.
 
 ## 2. Pull the site's design tokens
 

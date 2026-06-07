@@ -42,7 +42,19 @@ message. The interesting events:
 | `Applied 8 vars to chrome :root`             | Chrome CSS vars applied.            |
 | `Broadcast vars to N/M tab actors`           | Content CSS vars applied.           |
 | `Loaded userstyles[global]: N bytes`         | Global userstyles loaded.           |
-| `Loaded userstyles[github]: N bytes`        | Per-site userstyles loaded.         |
+| `Loaded userstyles[<site>]: N bytes`         | Per-site userstyles loaded.         |
+| `Scanned userstyles dir: N per-site file(s)` | Bridge parsed `matugen-userstyles-<site>.css` files. |
+| `Synced boost[<domain>]: id=X customCSS=YB`  | Per-site CSS pushed into a Zen Boost. |
+| `Userstyles[<suffix>] removed, clearing boost[<domain>].customCSS` | File renamed to `.disabled` — the boost is now empty. |
+| `Per-site CSS for <domain> missing, falling back to universal tint` | The site has a `BOOST_SITES` entry but the file is gone. |
+| `Universal sync: Nw/Mt (http=..., noHost=..., perSite=..., registered=..., already=...) created=N` | Periodic poll that auto-creates Zen Boosts for every visited http(s) tab. |
+| `Created new active boost[<domain>]: id=X`   | First-time universal tint applied. |
+| `syncWorkspaceTheme: called with accent=...` | A JSON change arrived.              |
+| `syncWorkspaceTheme: accent=... → hsl(...)`  | RGB→HSL conversion succeeded.      |
+| `Synced workspace gradient: N color(s) from accent ...` | Workspace gradient updated and `zen-space-gradient-update` event fired. |
+| `syncWorkspaceTheme: no active workspace, falling back to direct HSL on boosts` | Zen Workspaces is disabled — HSL is applied to each universal boost instead. |
+| `syncWorkspaceTheme: gZenWorkspaces not available, falling back to direct HSL on boosts` | Bridge ran before any browser window was open. |
+| `Updated N boost(s) with HSL from accent ...` | HSL fallback path succeeded for N domains. |
 | `Userstyles changed, broadcasting`           | Theme change detected.              |
 | `Broadcast userstyles to N/M tab actors`     | Content styles re-injected.         |
 | `Initial apply on startup`                   | First run after Zen start.          |
@@ -190,3 +202,119 @@ open an issue with:
    your wallpaper switcher writes).
 
 Without these, we can guess — but guessing takes longer than fixing.
+
+---
+
+## Zen Boost flow (universal + per-site)
+
+The bridge uses **two complementary delivery channels** for theming
+web content:
+
+1. **JSWindowActor** — pushes `--matugen-*` variables to every
+   content document's `:root` and re-injects the global
+   `userContent.css` rules. This is the chrome-side path.
+2. **Zen Boosts** — pushes per-site CSS into Zen's own
+   `boost.customCSS` field (registered as `AGENT_SHEET`) and creates
+   a "universal tint" Zen Boost for every http(s) domain you visit
+   (drives the C++ color-boost layer).
+
+### How universal tints work
+
+The bridge polls every 3 seconds. For every open http(s) tab whose
+domain is **not** in `BOOST_SITES`, it auto-creates a Zen Boost with
+`enableColorBoost: true, autoTheme: true, changeWasMade: true` and
+adds the domain to the in-memory `universalBoostedDomains` set.
+
+When you switch wallpaper, the bridge:
+1. Tries to push the accent into your active Zen workspace's
+   `theme.gradientColors` (primary) + fires
+   `zen-space-gradient-update` — Zen's parent actor re-broadcasts to
+   every child, the C++ layer re-tints open pages.
+2. If Zen Workspaces is disabled, falls back to converting the
+   accent RGB → HSL and writing `dotAngleDeg`/`saturation`/
+   `brightness` directly on every known universal boost. The C++
+   layer reads the same HSL fields, so the tint still updates.
+
+The result: a hue swap on every open site within ~3 seconds of the
+JSON file changing.
+
+### How per-site overrides work
+
+Domains in `BOOST_SITES` get a Zen Boost with
+`enableColorBoost: false` (we don't want the C++ tint fighting our
+explicit CSS) and `customCSS` populated from
+`matugen-userstyles-<site>.css`. The boost's `AGENT_SHEET` is what
+injects the rules into the content document.
+
+To disable a per-site theme without removing the file:
+
+```sh
+mv ~/.config/zen/<profile>/chrome/matugen-userstyles-github.css \
+   ~/.config/zen/<profile>/chrome/matugen-userstyles-github.css.disabled
+```
+
+On the next poll the bridge logs
+`Userstyles[github] removed, clearing boost[github.com].customCSS`
+and the domain falls through to the universal tint. Re-enable by
+renaming back.
+
+### Verifying the boost is registered
+
+In `about:config`, watch the
+`zen.boosts.<profile>` JSON store under
+`~/.config/zen/<profile>/zen-boosts.json`. You should see one entry
+per visited domain. Each entry has `changeWasMade: true` (without
+this flag, the parent actor refuses to return a stylesheet —
+silently).
+
+### "no active workspace" in the log
+
+If you see this on the first JSON change after Zen start, that's
+normal — `gZenWorkspaces` initializes lazily and the first call
+races it. The next poll (≤3s later) succeeds. If you see it on
+**every** JSON change, Zen Workspaces is disabled in your profile —
+the HSL fallback path runs instead and the log line
+`Updated N boost(s) with HSL from accent ...` confirms it.
+
+### GitHub theming is a work in progress
+
+The `userContent.github.template` (3700+ lines) works — top bar,
+sidebar, file tree, file preview, repo header, action buttons,
+PR/issue list, Copilot chat, search suggestions, and the
+profile-side vcard are all themed.
+
+**It is not perfect.** Specific properties still leak through on
+some pages: the dashboard "Pinned" cards, certain dropdown menus,
+the branch selector's popover, and a few niche admin pages. The
+universal Zen Boost tint handles these cases gracefully (it tints
+*every* site, not just GitHub), but the explicit per-site CSS is
+under active finetuning.
+
+If you find a specific page element that's unthemed, open an issue
+with the URL + a screenshot of DevTools → Elements → Styles for the
+element. The wildcard `[class*="prc-..."]` pattern usually just
+needs a new prefix entry, but on rare occasions a `!important`
+Primer rule is winning the cascade and we need to re-order.
+
+---
+
+## Workspace feature
+
+Zen's C++ color-boost layer reads
+`workspace.theme.gradientColors[primary].c` (or, if
+`autoTheme: false`, the explicit dot-picker knobs on the boost).
+The bridge handles both:
+
+- **With workspaces:** bridge writes the matugen accent into
+  `gradientColors[0]` and fires `zen-space-gradient-update`. The
+  parent actor re-broadcasts to every child. The C++ layer
+  re-computes the tint.
+- **Without workspaces:** bridge converts accent → HSL and writes
+  `dotAngleDeg`/`saturation`/`brightness` directly on each
+  universal boost. The C++ layer reads the same fields.
+
+If you want to verify which path ran, look for `Synced workspace
+gradient` vs `Updated N boost(s) with HSL` in the log. The
+HSL-fallback path requires the universal poll to have populated
+`universalBoostedDomains` — that takes one poll cycle (≤3s) on a
+fresh start.
