@@ -112,42 +112,8 @@ fades the entire browser from one look to another.
                           │ Matugen    │    │ ZenBoostsChild  │
                           │ Child      │    │  (per process)  │
                           │ • :root    │    │  • applies CSS  │
-                          │ • userCSS  │    │  • applies tint │
-                          └────────────┘    └─────────────────┘
-```
-┌──────────────────┐    JSON     ┌──────────────────┐
-│  wallpaper       │────────────▶│  theme_switcher  │
-│  switcher (QML)  │             │  (Rust binary)   │
-└──────────────────┘             └────────┬─────────┘
-                                          │ renders templates
-                                          ▼
-                          ┌──────────────────────────────┐
-                          │  ~/.config/zen/<profile>/    │
-                          │  chrome/                     │
-                          │    matugen-vars.json         │
-                          │    matugen-userstyles.css    │
-                          │    matugen-userstyles-       │
-                          │         github.css           │
-                          └────────┬─────────────────────┘
-                                   │ mtime watcher
-                                   ▼
-                          ┌──────────────────────────────┐
-                          │  matugen-bridge.uc.js        │
-                          │  (fx-autoconfig chrome side) │
-                          │   • sets prefs (8 vars)      │
-                          │   • updates :root in chrome  │
-                          │   • broadcasts to actors     │
-                          └────────┬─────────────────────┘
-                                   │ JSWindowActor messages
-                                   ▼
-                          ┌──────────────────────────────┐
-                          │  MatugenChild.sys.mjs        │
-                          │  (per content process)       │
-                          │   • re-injects userstyles    │
-                          │   • updates :root on doc     │
-                          │   • MutationObserver for     │
-                          │     lazy / SPA-loaded nodes  │
-                          └──────────────────────────────┘
+                           │ • userCSS  │    │  • applies tint │
+                           └────────────┘    └─────────────────┘
 ```
 
 The `theme_switcher` binary is the only piece this repo **does not**
