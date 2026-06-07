@@ -16,6 +16,7 @@ target/
 node_modules/
 dist/
 build/
+ref/
 
 # Generated theme files (re-rendered from templates by theme_switcher)
 matugen-userstyles*.css
