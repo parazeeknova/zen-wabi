@@ -2,7 +2,7 @@
 // @name matugen-bridge
 // @description Bridges matugen color JSON to Firefox CSS variables (chrome + content via JSWindowActor), and pushes per-site userstyles CSS to Zen's per-domain Boost system. The actor handles global :root vars on every page (since userContent.css is unreliable on Zen 1.20.1b); Zen's built-in ZenBoostsChild actor handles per-site customCSS via AGENT_SHEET registration.
 // @author doty
-// @version 1.6
+// @version 1.7
 // @ignorecache
 // ==/UserScript==
 
@@ -56,7 +56,7 @@ function logError(msg) {
   _appendLog("ERROR", msg);
 }
 
-logInfo("SCRIPT TOP — version 1.4");
+logInfo("SCRIPT TOP — version 1.7");
 
 ("use strict");
 
